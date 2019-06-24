@@ -761,15 +761,15 @@ static bool InitSanityCheck()
 
 static bool AppInitServers()
 {
-    RPCServer::OnStarted(&OnRPCStarted);
-    RPCServer::OnStopped(&OnRPCStopped);
-    if (!InitHTTPServer())
-        return false;
-    StartRPC();
-    if (!StartHTTPRPC())
-        return false;
-    if (gArgs.GetBoolArg("-rest", DEFAULT_REST_ENABLE)) StartREST();
-    StartHTTPServer();
+//    RPCServer::OnStarted(&OnRPCStarted);
+//    RPCServer::OnStopped(&OnRPCStopped);
+//    if (!InitHTTPServer())
+//        return false;
+//    StartRPC();
+//    if (!StartHTTPRPC())
+//        return false;
+//    if (gArgs.GetBoolArg("-rest", DEFAULT_REST_ENABLE)) StartREST();
+//    StartHTTPServer();
     return true;
 }
 
@@ -1189,9 +1189,9 @@ bool AppInitSanityChecks()
     // ********************************************************* Step 4: sanity checks
 
     // Initialize elliptic curve code
-    std::string sha256_algo = SHA256AutoDetect();
-    LogPrintf("Using the '%s' SHA256 implementation\n", sha256_algo);
-    RandomInit();
+//    std::string sha256_algo = SHA256AutoDetect();
+//    LogPrintf("Using the '%s' SHA256 implementation\n", sha256_algo);
+//    RandomInit();
     ECC_Start();
     globalVerifyHandle.reset(new ECCVerifyHandle());
 
@@ -1265,35 +1265,35 @@ bool AppInitMain(InitInterfaces& interfaces)
             gArgs.GetArg("-datadir", ""), fs::current_path().string());
     }
 
-    InitSignatureCache();
-    InitScriptExecutionCache();
+//    InitSignatureCache();
+//    InitScriptExecutionCache();
 
-    LogPrintf("Using %u threads for script verification\n", nScriptCheckThreads);
-    if (nScriptCheckThreads) {
-        for (int i=0; i<nScriptCheckThreads-1; i++)
-            threadGroup.create_thread([i]() { return ThreadScriptCheck(i); });
-    }
+//    LogPrintf("Using %u threads for script verification\n", nScriptCheckThreads);
+//    if (nScriptCheckThreads) {
+//        for (int i=0; i<nScriptCheckThreads-1; i++)
+//            threadGroup.create_thread([i]() { return ThreadScriptCheck(i); });
+//    }
 
     // Start the lightweight task scheduler thread
     CScheduler::Function serviceLoop = std::bind(&CScheduler::serviceQueue, &scheduler);
     threadGroup.create_thread(std::bind(&TraceThread<CScheduler::Function>, "scheduler", serviceLoop));
 
     GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
-    GetMainSignals().RegisterWithMempoolSignals(mempool);
+//    GetMainSignals().RegisterWithMempoolSignals(mempool);
 
     // Create client interfaces for wallets that are supposed to be loaded
     // according to -wallet and -disablewallet options. This only constructs
     // the interfaces, it doesn't load wallet data. Wallets actually get loaded
     // when load() and start() interface methods are called below.
-    g_wallet_init_interface.Construct(interfaces);
+//    g_wallet_init_interface.Construct(interfaces);
 
     /* Register RPC commands regardless of -server setting so they will be
      * available in the GUI RPC console even if external calls are disabled.
      */
-    RegisterAllCoreRPCCommands(tableRPC);
-    for (const auto& client : interfaces.chain_clients) {
-        client->registerRpcs();
-    }
+//    RegisterAllCoreRPCCommands(tableRPC);
+//    for (const auto& client : interfaces.chain_clients) {
+//        client->registerRpcs();
+//    }
     g_rpc_interfaces = &interfaces;
 #if ENABLE_ZMQ
     RegisterZMQRPCCommands(tableRPC);
@@ -1469,168 +1469,170 @@ bool AppInitMain(InitInterfaces& interfaces)
     LogPrintf("* Using %.1f MiB for chain state database\n", nCoinDBCache * (1.0 / 1024 / 1024));
     LogPrintf("* Using %.1f MiB for in-memory UTXO set (plus up to %.1f MiB of unused mempool space)\n", nCoinCacheUsage * (1.0 / 1024 / 1024), nMempoolSizeMax * (1.0 / 1024 / 1024));
 
-    bool fLoaded = false;
+    bool fLoaded = true;
     while (!fLoaded && !ShutdownRequested()) {
         bool fReset = fReindex;
         std::string strLoadError;
 
         uiInterface.InitMessage(_("Loading block index..."));
 
-        do {
-            const int64_t load_block_index_start_time = GetTimeMillis();
-            bool is_coinsview_empty;
-            try {
-                LOCK(cs_main);
-                UnloadBlockIndex();
-                pcoinsTip.reset();
-                pcoinsdbview.reset();
-                pcoinscatcher.reset();
-                // new CBlockTreeDB tries to delete the existing file, which
-                // fails if it's still open from the previous loop. Close it first:
-                pblocktree.reset();
-                pblocktree.reset(new CBlockTreeDB(nBlockTreeDBCache, false, fReset));
-
-                if (fReset) {
-                    pblocktree->WriteReindexing(true);
-                    //If we're reindexing in prune mode, wipe away unusable block files and all undo data files
-                    if (fPruneMode)
-                        CleanupBlockRevFiles();
-                }
-
-                if (ShutdownRequested()) break;
-
-                // LoadBlockIndex will load fHavePruned if we've ever removed a
-                // block file from disk.
-                // Note that it also sets fReindex based on the disk flag!
-                // From here on out fReindex and fReset mean something different!
-                if (!LoadBlockIndex(chainparams)) {
-                    if (ShutdownRequested()) break;
-                    strLoadError = _("Error loading block database");
-                    break;
-                }
-
-                // If the loaded chain has a wrong genesis, bail out immediately
-                // (we're likely using a testnet datadir, or the other way around).
-                if (!mapBlockIndex.empty() && !LookupBlockIndex(chainparams.GetConsensus().hashGenesisBlock)) {
-                    return InitError(_("Incorrect or no genesis block found. Wrong datadir for network?"));
-                }
-
-                // Check for changed -prune state.  What we are concerned about is a user who has pruned blocks
-                // in the past, but is now trying to run unpruned.
-                if (fHavePruned && !fPruneMode) {
-                    strLoadError = _("You need to rebuild the database using -reindex to go back to unpruned mode.  This will redownload the entire blockchain");
-                    break;
-                }
-
-                // At this point blocktree args are consistent with what's on disk.
-                // If we're not mid-reindex (based on disk + args), add a genesis block on disk
-                // (otherwise we use the one already on disk).
-                // This is called again in ThreadImport after the reindex completes.
-                if (!fReindex && !LoadGenesisBlock(chainparams)) {
-                    strLoadError = _("Error initializing block database");
-                    break;
-                }
-
-                // At this point we're either in reindex or we've loaded a useful
-                // block tree into mapBlockIndex!
-
-                pcoinsdbview.reset(new CCoinsViewDB(nCoinDBCache, false, fReset || fReindexChainState));
-                pcoinscatcher.reset(new CCoinsViewErrorCatcher(pcoinsdbview.get()));
-
-                // If necessary, upgrade from older database format.
-                // This is a no-op if we cleared the coinsviewdb with -reindex or -reindex-chainstate
-                if (!pcoinsdbview->Upgrade()) {
-                    strLoadError = _("Error upgrading chainstate database");
-                    break;
-                }
-
-                // ReplayBlocks is a no-op if we cleared the coinsviewdb with -reindex or -reindex-chainstate
-                if (!ReplayBlocks(chainparams, pcoinsdbview.get())) {
-                    strLoadError = _("Unable to replay blocks. You will need to rebuild the database using -reindex-chainstate.");
-                    break;
-                }
-
-                // The on-disk coinsdb is now in a good state, create the cache
-                pcoinsTip.reset(new CCoinsViewCache(pcoinscatcher.get()));
-
-                is_coinsview_empty = fReset || fReindexChainState || pcoinsTip->GetBestBlock().IsNull();
-                if (!is_coinsview_empty) {
-                    // LoadChainTip sets ::ChainActive() based on pcoinsTip's best block
-                    if (!LoadChainTip(chainparams)) {
-                        strLoadError = _("Error initializing block database");
-                        break;
-                    }
-                    assert(::ChainActive().Tip() != nullptr);
-                }
-            } catch (const std::exception& e) {
-                LogPrintf("%s\n", e.what());
-                strLoadError = _("Error opening block database");
-                break;
-            }
-
-            if (!fReset) {
-                // Note that RewindBlockIndex MUST run even if we're about to -reindex-chainstate.
-                // It both disconnects blocks based on ::ChainActive(), and drops block data in
-                // mapBlockIndex based on lack of available witness data.
-                uiInterface.InitMessage(_("Rewinding blocks..."));
-                if (!RewindBlockIndex(chainparams)) {
-                    strLoadError = _("Unable to rewind the database to a pre-fork state. You will need to redownload the blockchain");
-                    break;
-                }
-            }
-
-            try {
-                LOCK(cs_main);
-                if (!is_coinsview_empty) {
-                    uiInterface.InitMessage(_("Verifying blocks..."));
-                    if (fHavePruned && gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS) > MIN_BLOCKS_TO_KEEP) {
-                        LogPrintf("Prune: pruned datadir may not have more than %d blocks; only checking available blocks\n",
-                            MIN_BLOCKS_TO_KEEP);
-                    }
-
-                    CBlockIndex* tip = ::ChainActive().Tip();
-                    RPCNotifyBlockChange(true, tip);
-                    if (tip && tip->nTime > GetAdjustedTime() + 2 * 60 * 60) {
-                        strLoadError = _("The block database contains a block which appears to be from the future. "
-                                "This may be due to your computer's date and time being set incorrectly. "
-                                "Only rebuild the block database if you are sure that your computer's date and time are correct");
-                        break;
-                    }
-
-                    if (!CVerifyDB().VerifyDB(chainparams, pcoinsdbview.get(), gArgs.GetArg("-checklevel", DEFAULT_CHECKLEVEL),
-                                  gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS))) {
-                        strLoadError = _("Corrupted block database detected");
-                        break;
-                    }
-                }
-            } catch (const std::exception& e) {
-                LogPrintf("%s\n", e.what());
-                strLoadError = _("Error opening block database");
-                break;
-            }
-
-            fLoaded = true;
-            LogPrintf(" block index %15dms\n", GetTimeMillis() - load_block_index_start_time);
-        } while(false);
-
-        if (!fLoaded && !ShutdownRequested()) {
-            // first suggest a reindex
-            if (!fReset) {
-                bool fRet = uiInterface.ThreadSafeQuestion(
-                    strLoadError + ".\n\n" + _("Do you want to rebuild the block database now?"),
-                    strLoadError + ".\nPlease restart with -reindex or -reindex-chainstate to recover.",
-                    "", CClientUIInterface::MSG_ERROR | CClientUIInterface::BTN_ABORT);
-                if (fRet) {
-                    fReindex = true;
-                    AbortShutdown();
-                } else {
-                    LogPrintf("Aborted block database rebuild. Exiting.\n");
-                    return false;
-                }
-            } else {
-                return InitError(strLoadError);
-            }
-        }
+//        do {
+//            const int64_t load_block_index_start_time = GetTimeMillis();
+//            bool is_coinsview_empty;
+//            try {
+////                LogPrintf("skip load block index...(by sean)\n");
+//                LOCK(cs_main);
+//                UnloadBlockIndex();
+//                pcoinsTip.reset();
+//                pcoinsdbview.reset();
+//                pcoinscatcher.reset();
+//                // new CBlockTreeDB tries to delete the existing file, which
+//                // fails if it's still open from the previous loop. Close it first:
+//                pblocktree.reset();
+//                pblocktree.reset(new CBlockTreeDB(nBlockTreeDBCache, false, fReset));
+//
+//                if (fReset) {
+//                    pblocktree->WriteReindexing(true);
+//                    //If we're reindexing in prune mode, wipe away unusable block files and all undo data files
+//                    if (fPruneMode)
+//                        CleanupBlockRevFiles();
+//                }
+//
+//                if (ShutdownRequested()) break;
+//
+//                // LoadBlockIndex will load fHavePruned if we've ever removed a
+//                // block file from disk.
+//                // Note that it also sets fReindex based on the disk flag!
+//                // From here on out fReindex and fReset mean something different!
+//                if (!LoadBlockIndex(chainparams)) {
+//                    if (ShutdownRequested()) break;
+//                    strLoadError = _("Error loading block database");
+//                    break;
+//                }
+//
+//                // If the loaded chain has a wrong genesis, bail out immediately
+//                // (we're likely using a testnet datadir, or the other way around).
+//                if (!mapBlockIndex.empty() && !LookupBlockIndex(chainparams.GetConsensus().hashGenesisBlock)) {
+//                    return InitError(_("Incorrect or no genesis block found. Wrong datadir for network?"));
+//                }
+//
+//                // Check for changed -prune state.  What we are concerned about is a user who has pruned blocks
+//                // in the past, but is now trying to run unpruned.
+//                if (fHavePruned && !fPruneMode) {
+//                    strLoadError = _("You need to rebuild the database using -reindex to go back to unpruned mode.  This will redownload the entire blockchain");
+//                    break;
+//                }
+//
+//                // At this point blocktree args are consistent with what's on disk.
+//                // If we're not mid-reindex (based on disk + args), add a genesis block on disk
+//                // (otherwise we use the one already on disk).
+//                // This is called again in ThreadImport after the reindex completes.
+//                if (!fReindex && !LoadGenesisBlock(chainparams)) {
+//                    strLoadError = _("Error initializing block database");
+//                    break;
+//                }
+//
+//                // At this point we're either in reindex or we've loaded a useful
+//                // block tree into mapBlockIndex!
+//
+//                pcoinsdbview.reset(new CCoinsViewDB(nCoinDBCache, false, fReset || fReindexChainState));
+//                pcoinscatcher.reset(new CCoinsViewErrorCatcher(pcoinsdbview.get()));
+//
+//                // If necessary, upgrade from older database format.
+//                // This is a no-op if we cleared the coinsviewdb with -reindex or -reindex-chainstate
+//                if (!pcoinsdbview->Upgrade()) {
+//                    strLoadError = _("Error upgrading chainstate database");
+//                    break;
+//                }
+//
+//                // ReplayBlocks is a no-op if we cleared the coinsviewdb with -reindex or -reindex-chainstate
+//                if (!ReplayBlocks(chainparams, pcoinsdbview.get())) {
+//                    strLoadError = _("Unable to replay blocks. You will need to rebuild the database using -reindex-chainstate.");
+//                    break;
+//                }
+//
+//                // The on-disk coinsdb is now in a good state, create the cache
+//                pcoinsTip.reset(new CCoinsViewCache(pcoinscatcher.get()));
+//
+//                is_coinsview_empty = fReset || fReindexChainState || pcoinsTip->GetBestBlock().IsNull();
+//                if (!is_coinsview_empty) {
+//                    // LoadChainTip sets ::ChainActive() based on pcoinsTip's best block
+//                    if (!LoadChainTip(chainparams)) {
+//                        strLoadError = _("Error initializing block database");
+//                        break;
+//                    }
+//                    assert(::ChainActive().Tip() != nullptr);
+//                }
+//            } catch (const std::exception& e) {
+//                LogPrintf("%s\n", e.what());
+//                LogPrintf("error...\n");
+//                strLoadError = _("Error opening block database");
+//                break;
+//            }
+//
+//            if (!fReset) {
+//                // Note that RewindBlockIndex MUST run even if we're about to -reindex-chainstate.
+//                // It both disconnects blocks based on ::ChainActive(), and drops block data in
+//                // mapBlockIndex based on lack of available witness data.
+//                uiInterface.InitMessage(_("Rewinding blocks..."));
+//                if (!RewindBlockIndex(chainparams)) {
+//                    strLoadError = _("Unable to rewind the database to a pre-fork state. You will need to redownload the blockchain");
+//                    break;
+//                }
+//            }
+//
+//            try {
+//                LOCK(cs_main);
+//                if (!is_coinsview_empty) {
+//                    uiInterface.InitMessage(_("Verifying blocks..."));
+//                    if (fHavePruned && gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS) > MIN_BLOCKS_TO_KEEP) {
+//                        LogPrintf("Prune: pruned datadir may not have more than %d blocks; only checking available blocks\n",
+//                            MIN_BLOCKS_TO_KEEP);
+//                    }
+//
+//                    CBlockIndex* tip = ::ChainActive().Tip();
+//                    RPCNotifyBlockChange(true, tip);
+//                    if (tip && tip->nTime > GetAdjustedTime() + 2 * 60 * 60) {
+//                        strLoadError = _("The block database contains a block which appears to be from the future. "
+//                                "This may be due to your computer's date and time being set incorrectly. "
+//                                "Only rebuild the block database if you are sure that your computer's date and time are correct");
+//                        break;
+//                    }
+//
+//                    if (!CVerifyDB().VerifyDB(chainparams, pcoinsdbview.get(), gArgs.GetArg("-checklevel", DEFAULT_CHECKLEVEL),
+//                                  gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS))) {
+//                        strLoadError = _("Corrupted block database detected");
+//                        break;
+//                    }
+//                }
+//            } catch (const std::exception& e) {
+//                LogPrintf("%s\n", e.what());
+//                strLoadError = _("Error opening block database");
+//                break;
+//            }
+//
+//            fLoaded = true;
+//            LogPrintf(" block index %15dms\n", GetTimeMillis() - load_block_index_start_time);
+//        } while(false);
+        LogPrintf("point 1");
+//        if (!fLoaded && !ShutdownRequested()) {
+//            // first suggest a reindex
+//            if (!fReset) {
+//                bool fRet = uiInterface.ThreadSafeQuestion(
+//                    strLoadError + ".\n\n" + _("Do you want to rebuild the block database now?"),
+//                    strLoadError + ".\nPlease restart with -reindex or -reindex-chainstate to recover.",
+//                    "", CClientUIInterface::MSG_ERROR | CClientUIInterface::BTN_ABORT);
+//                if (fRet) {
+//                    fReindex = true;
+//                    AbortShutdown();
+//                } else {
+//                    LogPrintf("Aborted block database rebuild. Exiting.\n");
+//                    return false;
+//                }
+//            } else {
+//                return InitError(strLoadError);
+//            }
+//        }
     }
 
     // As LoadBlockIndex can take several minutes, it's possible the user
@@ -1641,43 +1643,45 @@ bool AppInitMain(InitInterfaces& interfaces)
         return false;
     }
 
-    fs::path est_path = GetDataDir() / FEE_ESTIMATES_FILENAME;
-    CAutoFile est_filein(fsbridge::fopen(est_path, "rb"), SER_DISK, CLIENT_VERSION);
+    LogPrintf("point 2\n");
+
+//    fs::path est_path = GetDataDir() / FEE_ESTIMATES_FILENAME;
+//    CAutoFile est_filein(fsbridge::fopen(est_path, "rb"), SER_DISK, CLIENT_VERSION);
     // Allowed to fail as this file IS missing on first startup.
-    if (!est_filein.IsNull())
-        ::feeEstimator.Read(est_filein);
+//    if (!est_filein.IsNull())
+//        ::feeEstimator.Read(est_filein);
     fFeeEstimatesInitialized = true;
 
     // ********************************************************* Step 8: start indexers
-    if (gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
-        g_txindex = MakeUnique<TxIndex>(nTxIndexCache, false, fReindex);
-        g_txindex->Start();
-    }
-
-    for (const auto& filter_type : g_enabled_filter_types) {
-        InitBlockFilterIndex(filter_type, filter_index_cache, false, fReindex);
-        GetBlockFilterIndex(filter_type)->Start();
-    }
+//    if (gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
+//        g_txindex = MakeUnique<TxIndex>(nTxIndexCache, false, fReindex);
+//        g_txindex->Start();
+//    }
+//
+//    for (const auto& filter_type : g_enabled_filter_types) {
+//        InitBlockFilterIndex(filter_type, filter_index_cache, false, fReindex);
+//        GetBlockFilterIndex(filter_type)->Start();
+//    }
 
     // ********************************************************* Step 9: load wallet
-    for (const auto& client : interfaces.chain_clients) {
-        if (!client->load()) {
-            return false;
-        }
-    }
-
+//    for (const auto& client : interfaces.chain_clients) {
+//        if (!client->load()) {
+//            return false;
+//        }
+//    }
+    LogPrintf("point 3\n");
     // ********************************************************* Step 10: data directory maintenance
 
     // if pruning, unset the service bit and perform the initial blockstore prune
     // after any wallet rescanning has taken place.
-    if (fPruneMode) {
-        LogPrintf("Unsetting NODE_NETWORK on prune mode\n");
-        nLocalServices = ServiceFlags(nLocalServices & ~NODE_NETWORK);
-        if (!fReindex) {
-            uiInterface.InitMessage(_("Pruning blockstore..."));
-            ::ChainstateActive().PruneAndFlush();
-        }
-    }
+//    if (fPruneMode) {
+//        LogPrintf("Unsetting NODE_NETWORK on prune mode\n");
+//        nLocalServices = ServiceFlags(nLocalServices & ~NODE_NETWORK);
+//        if (!fReindex) {
+//            uiInterface.InitMessage(_("Pruning blockstore..."));
+//            ::ChainstateActive().PruneAndFlush();
+//        }
+//    }
 
     if (chainparams.GetConsensus().vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout != 0) {
         // Only advertise witness capabilities if they have a reasonable start time.
@@ -1690,49 +1694,53 @@ bool AppInitMain(InitInterfaces& interfaces)
 
     // ********************************************************* Step 11: import blocks
 
-    if (!CheckDiskSpace(GetDataDir())) {
-        InitError(strprintf(_("Error: Disk space is low for %s"), GetDataDir()));
-        return false;
-    }
-    if (!CheckDiskSpace(GetBlocksDir())) {
-        InitError(strprintf(_("Error: Disk space is low for %s"), GetBlocksDir()));
-        return false;
-    }
+//    if (!CheckDiskSpace(GetDataDir())) {
+//        InitError(strprintf(_("Error: Disk space is low for %s"), GetDataDir()));
+//        return false;
+//    }
+//    if (!CheckDiskSpace(GetBlocksDir())) {
+//        InitError(strprintf(_("Error: Disk space is low for %s"), GetBlocksDir()));
+//        return false;
+//    }
+    LogPrintf("point 4\n");
 
     // Either install a handler to notify us when genesis activates, or set fHaveGenesis directly.
     // No locking, as this happens before any background thread is started.
-    boost::signals2::connection block_notify_genesis_wait_connection;
-    if (::ChainActive().Tip() == nullptr) {
-        block_notify_genesis_wait_connection = uiInterface.NotifyBlockTip_connect(BlockNotifyGenesisWait);
-    } else {
-        fHaveGenesis = true;
-    }
+//    boost::signals2::connection block_notify_genesis_wait_connection;
+//    if (::ChainActive().Tip() == nullptr) {
+//        block_notify_genesis_wait_connection = uiInterface.NotifyBlockTip_connect(BlockNotifyGenesisWait);
+//    } else {
+//        fHaveGenesis = true;
+//    }
+//
+//    if (gArgs.IsArgSet("-blocknotify"))
+//        uiInterface.NotifyBlockTip_connect(BlockNotifyCallback);
+    LogPrintf("point 5\n");
 
-    if (gArgs.IsArgSet("-blocknotify"))
-        uiInterface.NotifyBlockTip_connect(BlockNotifyCallback);
-
-    std::vector<fs::path> vImportFiles;
-    for (const std::string& strFile : gArgs.GetArgs("-loadblock")) {
-        vImportFiles.push_back(strFile);
-    }
-
-    threadGroup.create_thread(std::bind(&ThreadImport, vImportFiles));
+//    std::vector<fs::path> vImportFiles;
+//    for (const std::string& strFile : gArgs.GetArgs("-loadblock")) {
+//        vImportFiles.push_back(strFile);
+//    }
+//
+//    threadGroup.create_thread(std::bind(&ThreadImport, vImportFiles));
 
     // Wait for genesis block to be processed
-    {
-        WAIT_LOCK(g_genesis_wait_mutex, lock);
-        // We previously could hang here if StartShutdown() is called prior to
-        // ThreadImport getting started, so instead we just wait on a timer to
-        // check ShutdownRequested() regularly.
-        while (!fHaveGenesis && !ShutdownRequested()) {
-            g_genesis_wait_cv.wait_for(lock, std::chrono::milliseconds(500));
-        }
-        block_notify_genesis_wait_connection.disconnect();
-    }
+//    {
+//        WAIT_LOCK(g_genesis_wait_mutex, lock);
+//        // We previously could hang here if StartShutdown() is called prior to
+//        // ThreadImport getting started, so instead we just wait on a timer to
+//        // check ShutdownRequested() regularly.
+//        while (!fHaveGenesis && !ShutdownRequested()) {
+//            g_genesis_wait_cv.wait_for(lock, std::chrono::milliseconds(500));
+//        }
+//        block_notify_genesis_wait_connection.disconnect();
+//    }
 
     if (ShutdownRequested()) {
         return false;
     }
+
+    LogPrintf("point 6\n");
 
     // ********************************************************* Step 12: start node
 
@@ -1746,8 +1754,8 @@ bool AppInitMain(InitInterfaces& interfaces)
     }
     LogPrintf("nBestHeight = %d\n", chain_active_height);
 
-    if (gArgs.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION))
-        StartTorControl();
+//    if (gArgs.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION))
+//        StartTorControl();
 
     Discover();
 
@@ -1762,7 +1770,7 @@ bool AppInitMain(InitInterfaces& interfaces)
     connOptions.nMaxOutbound = std::min(MAX_OUTBOUND_CONNECTIONS, connOptions.nMaxConnections);
     connOptions.nMaxAddnode = MAX_ADDNODE_CONNECTIONS;
     connOptions.nMaxFeeler = 1;
-    connOptions.nBestHeight = chain_active_height;
+    connOptions.nBestHeight = 1;
     connOptions.uiInterface = &uiInterface;
     connOptions.m_banman = g_banman.get();
     connOptions.m_msgproc = peerLogic.get();
@@ -1774,58 +1782,59 @@ bool AppInitMain(InitInterfaces& interfaces)
     connOptions.nMaxOutboundLimit = nMaxOutboundLimit;
     connOptions.m_peer_connect_timeout = peer_connect_timeout;
 
-    for (const std::string& strBind : gArgs.GetArgs("-bind")) {
-        CService addrBind;
-        if (!Lookup(strBind.c_str(), addrBind, GetListenPort(), false)) {
-            return InitError(ResolveErrMsg("bind", strBind));
-        }
-        connOptions.vBinds.push_back(addrBind);
-    }
-    for (const std::string& strBind : gArgs.GetArgs("-whitebind")) {
-        CService addrBind;
-        if (!Lookup(strBind.c_str(), addrBind, 0, false)) {
-            return InitError(ResolveErrMsg("whitebind", strBind));
-        }
-        if (addrBind.GetPort() == 0) {
-            return InitError(strprintf(_("Need to specify a port with -whitebind: '%s'"), strBind));
-        }
-        connOptions.vWhiteBinds.push_back(addrBind);
-    }
-
-    for (const auto& net : gArgs.GetArgs("-whitelist")) {
-        CSubNet subnet;
-        LookupSubNet(net.c_str(), subnet);
-        if (!subnet.IsValid())
-            return InitError(strprintf(_("Invalid netmask specified in -whitelist: '%s'"), net));
-        connOptions.vWhitelistedRange.push_back(subnet);
-    }
+//    for (const std::string& strBind : gArgs.GetArgs("-bind")) {
+//        CService addrBind;
+//        if (!Lookup(strBind.c_str(), addrBind, GetListenPort(), false)) {
+//            return InitError(ResolveErrMsg("bind", strBind));
+//        }
+//        connOptions.vBinds.push_back(addrBind);
+//    }
+//    for (const std::string& strBind : gArgs.GetArgs("-whitebind")) {
+//        CService addrBind;
+//        if (!Lookup(strBind.c_str(), addrBind, 0, false)) {
+//            return InitError(ResolveErrMsg("whitebind", strBind));
+//        }
+//        if (addrBind.GetPort() == 0) {
+//            return InitError(strprintf(_("Need to specify a port with -whitebind: '%s'"), strBind));
+//        }
+//        connOptions.vWhiteBinds.push_back(addrBind);
+//    }
+//
+//    for (const auto& net : gArgs.GetArgs("-whitelist")) {
+//        CSubNet subnet;
+//        LookupSubNet(net.c_str(), subnet);
+//        if (!subnet.IsValid())
+//            return InitError(strprintf(_("Invalid netmask specified in -whitelist: '%s'"), net));
+//        connOptions.vWhitelistedRange.push_back(subnet);
+//    }
 
     connOptions.vSeedNodes = gArgs.GetArgs("-seednode");
 
     // Initiate outbound connections unless connect=0
-    connOptions.m_use_addrman_outgoing = !gArgs.IsArgSet("-connect");
-    if (!connOptions.m_use_addrman_outgoing) {
-        const auto connect = gArgs.GetArgs("-connect");
-        if (connect.size() != 1 || connect[0] != "0") {
-            connOptions.m_specified_outgoing = connect;
-        }
-    }
+//    connOptions.m_use_addrman_outgoing = !gArgs.IsArgSet("-connect");
+//    if (!connOptions.m_use_addrman_outgoing) {
+//        const auto connect = gArgs.GetArgs("-connect");
+//        if (connect.size() != 1 || connect[0] != "0") {
+//            connOptions.m_specified_outgoing = connect;
+//        }
+//    }
+    // binds to 3888
     if (!g_connman->Start(scheduler, connOptions)) {
         return false;
     }
 
     // ********************************************************* Step 13: finished
 
-    SetRPCWarmupFinished();
-    uiInterface.InitMessage(_("Done loading"));
+//    SetRPCWarmupFinished();
+//    uiInterface.InitMessage(_("Done loading"));
 
     for (const auto& client : interfaces.chain_clients) {
         client->start(scheduler);
     }
 
-    scheduler.scheduleEvery([]{
-        g_banman->DumpBanlist();
-    }, DUMP_BANS_INTERVAL * 1000);
+//    scheduler.scheduleEvery([]{
+//        g_banman->DumpBanlist();
+//    }, DUMP_BANS_INTERVAL * 1000);
 
     return true;
 }

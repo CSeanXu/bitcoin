@@ -45,7 +45,7 @@ static void WaitForShutdown()
 {
     while (!ShutdownRequested())
     {
-        MilliSleep(200);
+        MilliSleep(11200);
     }
     Interrupt();
 }
@@ -134,11 +134,11 @@ static bool AppInit(int argc, char* argv[])
             // InitError will have been called with detailed error, which ends up on console
             return false;
         }
-        if (!AppInitSanityChecks())
-        {
-            // InitError will have been called with detailed error, which ends up on console
-            return false;
-        }
+//        if (!AppInitSanityChecks())
+//        {
+//            // InitError will have been called with detailed error, which ends up on console
+//            return false;
+//        }
         if (gArgs.GetBoolArg("-daemon", false))
         {
 #if HAVE_DECL_DAEMON
@@ -167,7 +167,13 @@ static bool AppInit(int argc, char* argv[])
             // If locking the data directory failed, exit immediately
             return false;
         }
-        fRet = AppInitMain(interfaces);
+        try {
+            fRet = AppInitMain(interfaces);
+        }catch (...){
+            LogPrintf("point point point...\n");
+        }
+
+
     }
     catch (const std::exception& e) {
         PrintExceptionContinue(&e, "AppInit()");
